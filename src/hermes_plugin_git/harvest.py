@@ -9,8 +9,8 @@ import shutil
 
 from hermes.commands.harvest.base import HermesHarvestCommand, HermesHarvestPlugin
 
-from hermes_git.util.git_contributor_data import ContributorData
-from hermes_git.util.git_node_register import NodeRegister
+from hermes_plugin_git.util.git_contributor_data import ContributorData
+from hermes_plugin_git.util.git_node_register import NodeRegister
 
 
 # TODO: can and should we get this somehow?
