@@ -2,15 +2,22 @@ import logging
 import os
 import pathlib
 import typing as t
+import os
+from urllib.parse import urlparse
+import re
+import requests
+import json
 
 from pydantic import BaseModel
 import subprocess
 import shutil
 
 from hermes.commands.harvest.base import HermesHarvestCommand, HermesHarvestPlugin
-
+from hermes.model.context import HermesContext
+from hermes.utils import hermes_user_agent
 from hermes_plugin_git.util.git_contributor_data import ContributorData
 from hermes_plugin_git.util.git_node_register import NodeRegister
+from hermes_plugin_git.util.codemeta_builder import CodeMetaBuilder 
 
 
 # TODO: can and should we get this somehow?
@@ -20,6 +27,10 @@ _GIT_SEP = '|'
 _GIT_FORMAT = ['%aN', '%aE', '%aI', '%cN', '%cE', '%cI']
 _GIT_ARGS = []
 
+github_token = ''
+
+session = requests.Session()
+session.headers.update({"User-Agent": hermes_user_agent})
 
 # TODO The following code contains a lot of duplicate implementation that can be found in hermes.model
 #      (In fact, it was kind of the prototype for lots of stuff there.)
@@ -44,13 +55,95 @@ class GitHarvestPlugin(HermesHarvestPlugin):
             raise RuntimeError(f"`git {subcommand}` command failed with code {proc.returncode}")
         return proc.stdout
 
+    def _get_api_url(self, url: str) -> t.Optional[str]:
+        pattern = re.compile(r'https?://github\.com/([a-zA-Z0-9-_]+)/([a-zA-Z0-9-_]+)', re.IGNORECASE)
+        match = pattern.match(url)
+        if match:
+            owner, repo = match.groups()
+            return f'https://api.github.com/repos/{owner}/{repo}'
+        return None
+    
+    def _get_spdx_license_url(self, license_key: str) -> str:
+        """Fetch and return the SPDX license URL based on the license key."""
+        spdx_url = "https://raw.githubusercontent.com/spdx/license-list-data/master/json/licenses.json"
+        headers = {}
+        github_token = ''
+        if github_token:
+            headers["Authorization"] = f"token {github_token}"
+            
+        response = session.get(spdx_url, headers=headers)
+        
+        if response.status_code == 200:
+            license_data = response.json()
+            
+            for license_entry in license_data["licenses"]:
+                if license_entry["licenseId"] == license_key:
+                    return f"https://spdx.org/licenses/{license_entry['licenseId']}"
+        else:
+            print(f"Error fetching SPDX license list: {response.status_code}")
+            return ""
+
+
+    def _fetch_github_repo_data(self, api_url: str):
+        """Fetch GitHub repository data and return the license as an SPDX URL."""
+        headers = {}
+        
+        if github_token:
+            headers["Authorization"] = f"token {github_token}"
+        response = session.get(api_url, headers=headers)
+        
+
+        if response.status_code == 200:
+            repo_data = response.json()
+            license_key = repo_data.get("license", {}).get("key", "")
+            if license_key:
+                # Get the license URL from the SPDX list
+                license_url = self._get_spdx_license_url(license_key.upper())
+                repo_data["license"] = {"url": license_url}  # Replace license data with the SPDX URL
+            return repo_data
+        else:
+            print(f"Error fetching metadata: {response.status_code}")
+            return None
+        
+    def _write_to_file(self, data: dict, filename: str):
+        with open(filename, 'w', encoding='utf-8') as file:
+            json.dump(data, file, indent=4)
+            
+    def _store_metadata(self, data: dict, filename: str = "metadata.json"):
+        hermes_harvest_dir = pathlib.Path(".hermes/harvest") 
+        hermes_harvest_dir.mkdir(parents=True, exist_ok=True)
+
+        filepath = hermes_harvest_dir / filename  # Define file path
+        with open(filepath, 'w', encoding='utf-8') as file:
+            json.dump(data, file, indent=4)
+
+        print(f"Metadata stored in {filepath}")
+    
     def __call__(self, command: HermesHarvestCommand):
         """Implementation of a harvester that provides autor data from Git."""
 
         git_authors = NodeRegister(ContributorData, 'email', 'name', email=str.upper)
         git_committers = NodeRegister(ContributorData, 'email', 'name', email=str.upper)
+        ctx = HermesContext()
+        ctx.init_cache("harvest")
 
-        path = command.args.path
+        path = str(getattr(command.args, "path", ""))
+
+        # Check if path starts with "http" (indicating a URL)
+        if path.startswith("http") or path.startswith("git@"): 
+            path = path.replace("\\", "/") 
+            if path.startswith("https:/") and not path.startswith("https://"):
+                path = "https://" + path[7:]
+
+            api_url = self._get_api_url(path)
+   
+            repo_data = dict()
+            if api_url:
+                repo_data = self._fetch_github_repo_data(api_url)
+                if repo_data:
+                    codemeta = CodeMetaBuilder(repo_data).build()
+                    return codemeta, {}
+
         old_path = pathlib.Path.cwd()
         if path != old_path:
             os.chdir(path)
