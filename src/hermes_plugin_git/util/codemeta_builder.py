@@ -138,11 +138,6 @@ class CodeMetaBuilder:
             "downloadUrl": self.repo_data.get("archive_url"),
             "contributor": contributors,
             "readme": readme_url,
-            "author": [{"@type": "Person",
-                    "givenName": "",
-                    "familyName": "",
-                    "email":""
-                    }],
         }
         
         return metadata_dict

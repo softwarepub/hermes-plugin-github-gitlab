@@ -20,7 +20,6 @@ from hermes_plugin_git.util.git_node_register import NodeRegister
 from hermes_plugin_git.util.codemeta_builder import CodeMetaBuilder 
 
 
-# TODO: can and should we get this somehow?
 SHELL_ENCODING = 'utf-8'
 
 _GIT_SEP = '|'
@@ -32,9 +31,6 @@ github_token = ''
 session = requests.Session()
 session.headers.update({"User-Agent": hermes_user_agent})
 
-# TODO The following code contains a lot of duplicate implementation that can be found in hermes.model
-#      (In fact, it was kind of the prototype for lots of stuff there.)
-#      Clean up and refactor to use hermes.model instead
 
 class GitHarvestSettings(BaseModel):
     from_branch: str = 'HEAD'
