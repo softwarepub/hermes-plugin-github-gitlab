@@ -1,10 +1,10 @@
 import requests
 import re
 
+github_token = ''
 
 def get_contributors_from_repo(url: str):
     
-    github_token = ''
     headers = {"Authorization": f"token {github_token}"} if github_token else {}
     
     # Convert GitHub HTML URL to GitHub API URL
@@ -99,8 +99,6 @@ class CodeMetaBuilder:
         self.repo_data = repo_data
 
     def build(self) -> dict:
-
-        github_token = ''
         headers = {"Authorization": f"token {github_token}"} if github_token else {}
         
         # Fetch language data from the languages_url
@@ -127,6 +125,7 @@ class CodeMetaBuilder:
             "identifier": self.repo_data.get("id"),
             "description": self.repo_data.get("description"),
             "codeRepository": self.repo_data.get("html_url"),
+            "url": self.repo_data.get("html_url"),
             "issueTracker": issueTracker,
             "license": self.repo_data.get("license", {}).get("url") if self.repo_data.get("license") else None,
             "programmingLanguage": programming_languages,
