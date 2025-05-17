@@ -63,7 +63,6 @@ class GitHarvestPlugin(HermesHarvestPlugin):
         """Fetch and return the SPDX license URL based on the license key."""
         spdx_url = "https://raw.githubusercontent.com/spdx/license-list-data/master/json/licenses.json"
         headers = {}
-        github_token = ''
         if github_token:
             headers["Authorization"] = f"token {github_token}"
             
