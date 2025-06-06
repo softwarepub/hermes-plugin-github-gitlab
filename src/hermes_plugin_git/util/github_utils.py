@@ -1,11 +1,20 @@
 import requests
 import re
 
-github_token = ''
 
-def get_contributors_from_repo(url: str):
+def get_contributors_from_repo(url: str, token: str = None):
+    """
+    Fetch a list of contributors from a GitHub repository.
+
+    Args:
+        url (str): The GitHub repository URL.
+        token (str, optional): GitHub API token for authenticated requests. Defaults to None.
+
+    Returns:
+        list: A sorted list of contributors with givenName, familyName, and email.
+    """
     
-    headers = {"Authorization": f"token {github_token}"} if github_token else {}
+    headers = {"Authorization": f"token {token}"} if token else {}
     
     # Convert GitHub HTML URL to GitHub API URL
     if url.startswith("https://github.com/"):
@@ -74,6 +83,15 @@ def get_contributors_from_repo(url: str):
 
     
 def fetch_readme(url: str):
+    """
+    Fetch the README file download URL from a GitHub repository.
+
+    Args:
+        url (str): The GitHub repository URL.
+
+    Returns:
+        str or None: The download URL of the README file if found, otherwise None.
+    """
     url = url.replace("https://github.com/", "")
     base_url = f"https://api.github.com/repos/{url}/contents"
     response = requests.get(base_url)
@@ -95,11 +113,28 @@ def fetch_readme(url: str):
 
 
 class CodeMetaBuilder:
-    def __init__(self, repo_data: dict):
+    """
+    Class to build a CodeMeta-based metadata dictionary for a GitHub repository.
+
+    Attributes:
+        repo_data (dict): The repository metadata from the GitHub API.
+        token (str, optional): GitHub API token for authenticated requests.
+    """
+    def __init__(self, repo_data: dict, token: str = None):
         self.repo_data = repo_data
+        self.token = token
 
     def build(self) -> dict:
-        headers = {"Authorization": f"token {github_token}"} if github_token else {}
+        """
+        Build the CodeMeta metadata dictionary.
+
+        Fetches languages, README file, and contributors, and organizes
+        them into a dictionary following the CodeMeta.
+
+        Returns:
+            dict: A dictionary containing CodeMeta-based metadata, or None if an error occurs.
+        """
+        headers = {"Authorization": f"token {self.token}"} if self.token else {}
         
         # Fetch language data from the languages_url
         languages_url = self.repo_data['languages_url']
@@ -114,7 +149,7 @@ class CodeMetaBuilder:
 
         repo_url = self.repo_data.get("html_url")
         readme_url = fetch_readme(repo_url)
-        contributors = get_contributors_from_repo(repo_url) if repo_url else []
+        contributors = get_contributors_from_repo(repo_url, self.token) if repo_url else []
         
         issueTracker = repo_url + '/issues'
         

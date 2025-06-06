@@ -6,14 +6,14 @@
 
 [tool.poetry]
 # Reference at https://python-poetry.org/docs/pyproject/
-name = "hermes-plugin-git"
+name = "hermes-plugin-githublab"
 version = "0.8.0"
 license = "Apache-2.0"
 authors = [
     "Michael Meinel <michael.meinel@dlr.de>",
 ]
 
-description = "HERMES plugin for git."
+description = "HERMES plugin for github and gitlab."
 repository = "https://github.com/softwarepub/hermes-plugin-git"
 keywords = ["publishing", "metadata", "automation"]
 
@@ -21,7 +21,7 @@ keywords = ["publishing", "metadata", "automation"]
 #     a) including contrib packages in the future and
 #     b) rename the package for development snapshot releases to TestPyPI
 packages = [
-    { include = "hermes_plugin_git", from = "src" }
+    { include = "hermes_plugin_githublab", from = "src" }
 ]
 
 [tool.poetry.dependencies]
@@ -56,7 +56,7 @@ sphinxcontrib-mermaid="^0.8.1"
 sphinx-togglebutton="^0.3.2"
 
 [tool.poetry.plugins."hermes.harvest"]
-git = "hermes_plugin_git.harvest:GitHarvestPlugin"
+githublab = "hermes_plugin_git.harvest:GitHubLabHarvestPlugin"
 
 [build-system]
 requires = ["poetry-core>=1.2.0"]

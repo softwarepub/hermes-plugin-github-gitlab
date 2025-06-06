@@ -1,209 +1,136 @@
 import logging
-import os
-import pathlib
-import typing as t
-import os
-from urllib.parse import urlparse
-import re
+from typing import Tuple, Dict, Optional
+import gitlab
 import requests
-import json
+from urllib.parse import urlparse
 
-from pydantic import BaseModel
-import subprocess
-import shutil
-
-from hermes.commands.harvest.base import HermesHarvestCommand, HermesHarvestPlugin
-from hermes.model.context import HermesContext
 from hermes.utils import hermes_user_agent
-from hermes_plugin_git.util.git_contributor_data import ContributorData
-from hermes_plugin_git.util.git_node_register import NodeRegister
-from hermes_plugin_git.util.codemeta_builder import CodeMetaBuilder 
+from hermes.commands.harvest.base import HermesHarvestPlugin, HermesHarvestCommand
+from hermes.commands.harvest.util.token import load_token_from_toml
+from hermes_plugin_git.util.github_utils import CodeMetaBuilder
+from hermes_plugin_git.util.gitlab_utils import (
+    get_gitlab_project,
+    extract_gitlab_license,
+    get_gitlab_contributors
+)
+
+logger = logging.getLogger(__name__)
+
+SPDX_URL = 'https://raw.githubusercontent.com/spdx/license-list-data/master/json/licenses.json'
 
 
-SHELL_ENCODING = 'utf-8'
-
-_GIT_SEP = '|'
-_GIT_FORMAT = ['%aN', '%aE', '%aI', '%cN', '%cE', '%cI']
-_GIT_ARGS = []
-
-github_token = ''
-
-session = requests.Session()
-session.headers.update({"User-Agent": hermes_user_agent})
+def create_session() -> requests.Session:
+    session = requests.Session()
+    session.headers.update({"User-Agent": hermes_user_agent})
+    return session
 
 
-class GitHarvestSettings(BaseModel):
-    from_branch: str = 'HEAD'
-
-
-class GitHarvestPlugin(HermesHarvestPlugin):
-    settings_class = GitHarvestSettings
-
+class GitHubLabHarvestPlugin(HermesHarvestPlugin):
     def __init__(self):
-        self.git_exe = shutil.which('git')
-        if not self.git_exe:
-            raise RuntimeError('Git not available!')
+        self.session = create_session()
+        self.spdx_licenses = self._load_spdx_licenses()
+        self.token = None
 
-    def _run_git(self, subcommand: str, *args: str) -> t.TextIO:
-        proc = subprocess.run([self.git_exe, subcommand, *args, *_GIT_ARGS], capture_output=True)
-        if proc.returncode != 0:
-            # TODO better suited exception with stdout / stderr output
-            raise RuntimeError(f"`git {subcommand}` command failed with code {proc.returncode}")
-        return proc.stdout
+    def _load_spdx_licenses(self) -> Dict[str, str]:
+        try:
+            response = self.session.get(SPDX_URL)
+            response.raise_for_status()
+            licenses = {
+                lic['name'].upper(): lic['licenseId']
+                for lic in response.json().get('licenses', [])
+            }
+            return licenses
+        except requests.RequestException as e:
+            logger.error(f"Failed to load SPDX licenses: {e}")
+            return {}
 
-    def _get_api_url(self, url: str) -> t.Optional[str]:
-        pattern = re.compile(r'https?://github\.com/([a-zA-Z0-9-_]+)/([a-zA-Z0-9-_]+)', re.IGNORECASE)
-        match = pattern.match(url)
-        if match:
-            owner, repo = match.groups()
-            return f'https://api.github.com/repos/{owner}/{repo}'
-        return None
-    
-    def _get_spdx_license_url(self, license_key: str) -> str:
-        """Fetch and return the SPDX license URL based on the license key."""
-        spdx_url = "https://raw.githubusercontent.com/spdx/license-list-data/master/json/licenses.json"
-        headers = {}
-        if github_token:
-            headers["Authorization"] = f"token {github_token}"
-            
-        response = session.get(spdx_url, headers=headers)
-        
-        if response.status_code == 200:
-            license_data = response.json()
-            
-            for license_entry in license_data["licenses"]:
-                if license_entry["licenseId"] == license_key:
-                    return f"https://spdx.org/licenses/{license_entry['licenseId']}"
-        else:
-            print(f"Error fetching SPDX license list: {response.status_code}")
-            return ""
-
-
-    def _fetch_github_repo_data(self, api_url: str):
-        """Fetch GitHub repository data and return the license as an SPDX URL."""
-        headers = {}
-        
-        if github_token:
-            headers["Authorization"] = f"token {github_token}"
-        response = session.get(api_url, headers=headers)
-        
-
-        if response.status_code == 200:
-            repo_data = response.json()
-            license_key = repo_data.get("license", {}).get("key", "")
-            if license_key:
-                # Get the license URL from the SPDX list
-                license_url = self._get_spdx_license_url(license_key.upper())
-                repo_data["license"] = {"url": license_url}  # Replace license data with the SPDX URL
-            return repo_data
-        else:
-            print(f"Error fetching metadata: {response.status_code}")
-            return None
-        
-    def _write_to_file(self, data: dict, filename: str):
-        with open(filename, 'w', encoding='utf-8') as file:
-            json.dump(data, file, indent=4)
-            
-    def _store_metadata(self, data: dict, filename: str = "metadata.json"):
-        hermes_harvest_dir = pathlib.Path(".hermes/harvest") 
-        hermes_harvest_dir.mkdir(parents=True, exist_ok=True)
-
-        filepath = hermes_harvest_dir / filename  # Define file path
-        with open(filepath, 'w', encoding='utf-8') as file:
-            json.dump(data, file, indent=4)
-
-        print(f"Metadata stored in {filepath}")
-    
     def __call__(self, command: HermesHarvestCommand):
-        """Implementation of a harvester that provides autor data from Git."""
+        self.token = self._load_token()
 
-        git_authors = NodeRegister(ContributorData, 'email', 'name', email=str.upper)
-        git_committers = NodeRegister(ContributorData, 'email', 'name', email=str.upper)
-        ctx = HermesContext()
-        ctx.init_cache("harvest")
+        path = str(getattr(command.args, "path", "")).replace("\\", "/")
+        path = self._normalize_url(path)
 
-        path = str(getattr(command.args, "path", ""))
+        platform, metadata = self._fetch_repo_metadata(path)
+        if platform == 'github' and metadata:
+            codemeta = CodeMetaBuilder(metadata, token=self.token).build()
+            return codemeta, {}
+        return metadata, {}
 
-        # Check if path starts with "http" (indicating a URL)
-        if path.startswith("http") or path.startswith("git@"): 
-            path = path.replace("\\", "/") 
-            if path.startswith("https:/") and not path.startswith("https://"):
-                path = "https://" + path[7:]
+    def _normalize_url(self, path: str) -> str:
+        if not path.startswith(("http", "git@")):
+            raise ValueError("Provided path is not a valid URL.")
+        if path.startswith("https:/") and not path.startswith("https://"):
+            path = "https://" + path[7:]
+        return path
 
-            api_url = self._get_api_url(path)
-   
-            repo_data = dict()
-            if api_url:
-                repo_data = self._fetch_github_repo_data(api_url)
-                if repo_data:
-                    codemeta = CodeMetaBuilder(repo_data).build()
-                    return codemeta, {}
+    def _load_token(self) -> Optional[str]:
+        try:
+            return load_token_from_toml('hermes.toml')
+        except Exception as e:
+            logger.warning(f"Failed to load token: {e}")
+            return None
 
-        old_path = pathlib.Path.cwd()
-        if path != old_path:
-            os.chdir(path)
+    def _fetch_repo_metadata(self, url: str) -> Tuple[str, dict]:
+        parsed_url = urlparse(url)
+        host = parsed_url.netloc.lower()
 
-        stdout = self._run_git("rev-parse", "--abbrev-ref", command.settings.git.from_branch)
-        git_branch = stdout.decode(SHELL_ENCODING).strip()
+        if 'github.com' in host:
+            return 'github', self._fetch_github_metadata(url)
+        elif 'gitlab.com' in host:
+            return 'gitlab', self._fetch_gitlab_metadata(url)
+        else:
+            raise ValueError("Unsupported repository host.")
 
-        # TODO: should we warn or error if the HEAD is detached?
+    def _fetch_github_metadata(self, repo_url: str) -> dict:
+        parsed = urlparse(repo_url)
+        owner, repo = parsed.path.strip("/").split("/")[:2]
+        api_url = f"https://api.github.com/repos/{owner}/{repo}"
 
-        stdout = self._run_git("log", f"--pretty={_GIT_SEP.join(_GIT_FORMAT)}")
-        git_log = stdout.decode(SHELL_ENCODING).split('\n')
+        headers = {"Authorization": f"token {self.token}"} if self.token else {}
 
-        for line in git_log:
-            try:
-                # a = author, c = committer
-                a_name, a_email, a_timestamp, c_name, c_email, c_timestamp = line.split(_GIT_SEP)
-            except ValueError:
-                continue
+        response = self.session.get(api_url, headers=headers)
+        response.raise_for_status()
 
-            git_authors.update(email=a_email, name=a_name, timestamp=a_timestamp, role=None)
-            git_committers.update(email=c_email, name=c_name, timestamp=c_timestamp, role=None)
+        data = response.json()
+        license_key = data.get("license", {}).get("key")
 
-        git_contributors = self._merge_contributors(git_authors, git_committers)
-        self._audit_contributors(git_contributors, logging.getLogger('audit.git'))
+        if license_key:
+            data["license"] = {"url": f"https://spdx.org/licenses/{license_key.upper()}"}
+        return data
 
-        data = dict()
-        data.update({"contributor": [contributor.to_codemeta() for contributor in git_contributors._all]})
-        data.update({"hermes:gitBranch": git_branch})
+    def _fetch_gitlab_metadata(self, repo_url: str) -> dict:
+        parsed = urlparse(repo_url)
+        host = f"{parsed.scheme}://{parsed.netloc}"
+        path = parsed.path.strip("/")
 
-        return data, {"gitBranch": git_branch}
+        if not self.token:
+            raise ValueError("GitLab access requires a token.")
+        gl = gitlab.Gitlab(host, private_token=self.token)
 
-    def _audit_contributors(self, contributors, audit_log: logging.Logger):
-        # Collect all authors that have ambiguous data
-        unmapped_contributors = [a for a in contributors._all if len(a.email) > 1 or len(a.name) > 1]
+        project = get_gitlab_project(gl, path)
+        license_url = extract_gitlab_license(gl, project.id, self.spdx_licenses)
+        contributors = get_gitlab_contributors(project)
 
-        if unmapped_contributors:
-            # Report to the audit about our findings
-            audit_log.warning('!!! warning "You have unmapped contributors in your Git history."')
-            for contributor in unmapped_contributors:
-                if len(contributor.email) > 1:
-                    audit_log.info("    - %s has alternate email: %s", str(contributor),
-                                   ', '.join(contributor.email[1:]))
-                if len(contributor.name) > 1:
-                    audit_log.info("    - %s has alternate names: %s", str(contributor),
-                                   ', '.join(contributor.name[1:]))
-            audit_log.warning('')
+        metadata = {
+            "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+            "@type": "SoftwareSourceCode",
+            "name": project.name,
+            "description": project.description,
+            "codeRepository": project.http_url_to_repo,
+            "url": project.web_url,
+            "issueTracker": f"{project.web_url}/-/issues",
+            "license": license_url,
+            "dateCreated": self._parse_date(project.created_at),
+            "dateModified": self._parse_date(project.last_activity_at),
+            "keywords": project.topics or [],
+            "programmingLanguage": list(project.languages().keys()),
+            "downloadUrl": project.http_url_to_repo,
+            "author": [{"@type": "Person", "name": project.namespace.get('name', ''), "email": ""}],
+            "contributor": contributors,
+            "readme": project.readme_url,
+        }
+        return metadata
 
-            audit_log.info(
-                "Please consider adding a `.maillog` file to your repository to disambiguate these contributors.")
-            audit_log.info('')
-            audit_log.info('``` .mailmap')
-
-            audit_log.info('```')
-
-    def _merge_contributors(self, git_authors: NodeRegister, git_committers: NodeRegister) -> NodeRegister:
-        """
-        Merges the git authors and git committers :py:class:`NodeRegister` and assign the respective roles for each node.
-        """
-        git_contributors = NodeRegister(ContributorData, 'email', 'name', email=str.upper)
-        for author in git_authors._all:
-            git_contributors.update(email=author.email[0], name=author.name[0], timestamp=author.timestamp,
-                                    role='git author')
-
-        for committer in git_committers._all:
-            git_contributors.update(email=committer.email[0], name=committer.name[0], timestamp=committer.timestamp,
-                                    role='git committer')
-
-        return git_contributors
+    @staticmethod
+    def _parse_date(date_str: Optional[str]) -> Optional[str]:
+        return date_str.split('T')[0] if date_str else None
