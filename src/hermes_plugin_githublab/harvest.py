@@ -7,8 +7,8 @@ from urllib.parse import urlparse
 from hermes.utils import hermes_user_agent
 from hermes.commands.harvest.base import HermesHarvestPlugin, HermesHarvestCommand
 from hermes.commands.harvest.util.token import load_token_from_toml
-from hermes_plugin_git.util.github_utils import CodeMetaBuilder
-from hermes_plugin_git.util.gitlab_utils import (
+from hermes_plugin_githublab.util.github_utils import CodeMetaBuilder
+from hermes_plugin_githublab.util.gitlab_utils import (
     get_gitlab_project,
     extract_gitlab_license,
     get_gitlab_contributors
