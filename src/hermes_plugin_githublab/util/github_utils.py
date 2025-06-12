@@ -32,8 +32,9 @@ def get_contributors_from_repo(url: str, token: str = None):
         
     all_commits = []
     page = 1
+    max_pages = 10
     
-    while True:
+    while page <= max_pages:
         response = requests.get(f"{api_url_commits}?per_page=100&page={page}", headers=headers)
         
         if response.status_code != 200:
