@@ -1,6 +1,6 @@
 ## HERMES GitHub and GitLab Plugin for Metadata Extraction
 > This plugin automatically harvests metadata from GitHub and GitLab repositories.
-> The extraction follows the **[CodeMeta](https://codemeta.github.io/)** standard to ensure compatibility and interoperability with other metadata tools and formats.
+> The extraction follows the **[CodeMeta](https://codemeta.github.io/) ([version 3.0](https://w3id.org/codemeta/3.0))** standard to ensure compatibility and interoperability with other metadata tools and formats. In addition, we align with the [CodeMeta Crosswalks](https://codemeta.github.io/crosswalk/), which offers a detailed mapping between metadata fields from a variety of software repositories, registries, and archives. 
 ## Automatically Extracted Metadata
 > The following metadata fields are extracted automatically:  
 > *(Listed in alphabetical order)*
