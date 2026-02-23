@@ -47,7 +47,7 @@ class GitHubLabHarvestPlugin(HermesHarvestPlugin):
     def __call__(self, command: HermesHarvestCommand):
         self.token = self._load_token()
 
-        path = str(getattr(command.args, "path", "")).replace("\\", "/")
+        path = str(getattr(command.args, "url", "")).replace("\\", "/")
         path = self._normalize_url(path)
 
         platform, metadata = self._fetch_repo_metadata(path)
@@ -112,7 +112,7 @@ class GitHubLabHarvestPlugin(HermesHarvestPlugin):
         contributors = get_gitlab_contributors(project)
 
         metadata = {
-            "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+            "@context": "https://w3id.org/codemeta/3.0",
             "@type": "SoftwareSourceCode",
             "name": project.name,
             "description": project.description,
