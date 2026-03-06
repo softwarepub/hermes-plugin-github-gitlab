@@ -47,7 +47,7 @@ class GitHubLabHarvestPlugin(HermesHarvestPlugin):
     def __call__(self, command: HermesHarvestCommand):
         self.token = self._load_token()
 
-        path = str(getattr(command.args, "url", "")).replace("\\", "/")
+        path = str(getattr(command.args, "path", "")).replace("\\", "/")
         path = self._normalize_url(path)
 
         platform, metadata = self._fetch_repo_metadata(path)
