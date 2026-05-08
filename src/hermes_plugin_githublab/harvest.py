@@ -92,7 +92,7 @@ class GitHubLabHarvestPlugin(HermesHarvestPlugin):
         response.raise_for_status()
 
         data = response.json()
-        license_key = data.get("license", {}).get("key")
+        license_key = data.get("license", {}).get("key") if data.get("license") else None
 
         if license_key:
             data["license"] = {"url": f"https://spdx.org/licenses/{license_key.upper()}"}
@@ -125,7 +125,10 @@ class GitHubLabHarvestPlugin(HermesHarvestPlugin):
             "keywords": project.topics or [],
             "programmingLanguage": list(project.languages().keys()),
             "downloadUrl": project.http_url_to_repo,
-            "author": [{"@type": "Person", "name": project.namespace.get('name', ''), "email": ""}],
+            "author": [{
+                "@type": "Person",
+                "name": (project.namespace or {}).get("name", ""),
+                "email": ""}],
             "contributor": contributors,
             "readme": project.readme_url,
         }
